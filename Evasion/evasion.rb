@@ -1,29 +1,85 @@
 require 'socket'
+
 Infinity = 1.0/0
 
-class Evasion
-	attr_accessor :server, :hunter, :prey, :board, :board_history, :walls, :current_player, :current_turn
+class EvasionServer
+	attr_accessor :server, :acceptor, :creator, :games, :connections, :results
 	def initialize
+		@games = []
+		@connections = []
+		@results = []
 		start_server!
-		setup_board!
-		setup_players!
-		@board_history = []
-		@walls = []
+		start_acceptor!
+		start_game_creator!
 	end
-
-	### Methods called by the game setting itself up or by .play
 
 	def start_server!
 		@server = TCPServer.open($port)
 	end
 
+	def start_acceptor!
+		$threads << @acceptor = Thread.new() do
+			puts "ACCEPTOR ONLINE"
+			while true
+				if new_connection = @server.accept
+					puts "New connection accepted: #{new_connection}"
+					@connections << new_connection
+				end
+			end
+		end
+	end
+
+	def start_game_creator!
+		$threads << @creator = Thread.new() do
+			puts "CREATOR ONLINE"
+			ready_players = []
+			while true
+				@connections.each do |c|
+					line = c.readline
+					if line =~ /JOIN\W+(\w+)/i
+						puts "JOIN: #{$1} joined a game"
+						ready_players << {:connection => c, :user => $1.strip}
+						@connections.delete c
+					end
+					if ready_players.size > 1
+						puts "Two players have requested a game, spawning new game for:"
+						p1 = ready_players.pop
+						p2 = ready_players.pop
+						puts "\tHunter: #{p1[:user]}\n\tPrey: #{p2[:user]}"
+						new_game = Evasion.new(p1[:connection], p1[:user], p2[:connection], p2[:user])
+						@games << new_game
+						$threads << Thread.new(new_game) do |game|
+							Thread.current.priority = 10
+							@results << game.play
+						end
+					end
+				end
+			end
+		end
+	end
+end
+
+class Evasion
+	@@game_count = 1
+	attr_accessor :hunter, :prey, :board, :board_history, :walls, :current_player, :current_turn, :id
+	def initialize(connection_one, user_one, connection_two, user_two)
+		setup_board!
+		setup_players!(connection_one, user_one, connection_two, user_two)
+		@board_history = []
+		@walls = []
+		@id = @@game_count
+		@@game_count += 1
+	end
+
+	### Methods called by the game setting itself up or by .play
+
 	def setup_board!
 		@board = Array.new($dimensions[:y]){ Array.new($dimensions[:x]) {:empty} } #Remember, this is rows of Y, columns of X, thus ary[y][x]
 	end
 
-	def setup_players!
-		@hunter = Hunter.new(self, @server.accept)
-		@prey = Prey.new(self, @server.accept)
+	def setup_players!(connection_one, user_one, connection_two, user_two)
+		@hunter = Hunter.new(self, connection_one, user_one)
+		@prey = Prey.new(self, connection_two, user_two)
 	end
 
 	def play
@@ -31,13 +87,16 @@ class Evasion
 		@current_player = @hunter
 		players.each{|p| p.write(game_parameters)}
 		until is_game_over?
-			puts @current_turn
+			# print "#{@current_turn}: "
+			pre_turn_wall_count = @walls.size
 			@current_player.take_turn
+			print_minified_board() if @current_turn%5 == 0 || @walls.size != pre_turn_wall_count
 			advance_turn!
 			puts ""
 		end
-		report_winner
+		result = report_winner
 		cleanup_players!
+		result
 	end
 
 	def game_parameters
@@ -82,22 +141,25 @@ class Evasion
 	def hunter_trapped?
 		corners = []
 		[-1, +1].each{|dx| [-1, +1].each{|dy| corners << {:x => @hunter.x + dx, :y => @hunter.y + dy} } }
-		!(corners.map{|p| occupied? p}.include? false )
+		!(corners.map{|p| occupied?(p[:x], p[:y])}.include? false )
 	end
 
 	def players_within_distance?
+		captured_points.include? @prey.coords
+	end
+
+	def captured_points(range = $capture_distance)
 		checked_set = []
 		current_set = [@hunter.coords]
 
 		distance = 0
-		until distance > $capture_distance || current_set.empty?
+		until distance > range || current_set.empty?
 			found_set = ((current_set.map{|c| collect_adjacent_points(c)}.flatten - checked_set) - current_set)
 			checked_set += current_set
 			current_set = found_set
 			distance += 1
 		end
-		final_set = (checked_set + current_set).reject{|p| distance(@hunter.coords,p) > $capture_distance}
-		final_set.include? @prey.coords
+		final_set = (checked_set + current_set).reject{|p| distance(@hunter.coords,p) > range}
 	end
 
 	def players_surrounded?
@@ -178,9 +240,11 @@ class Evasion
 		if reason = won_by?(:hunter)
 			@hunter.write("GAMEOVER #{current_round} WINNER HUNTER #{reason}")
 			@prey.write("GAMEOVER #{current_round} LOSER PREY #{reason}")
+			{:winner => @hunter.username, :role => "Hunter", :time => current_round, :reason => reason}
 		elsif reason = won_by?(:prey)
 			@hunter.write("GAMEOVER #{current_round} LOSER HUNTER #{reason}")
 			@prey.write("GAMEOVER #{current_round} WINNER PREY #{reason}")
+			{:winner => @prey.username, :role => "Prey", :time => current_round, :reason => reason}
 		end
 	end
 
@@ -200,6 +264,55 @@ class Evasion
 		end
 	end
 
+	def print_board
+		puts "GAME BOARD AT TIME: #{@current_turn}"
+		print full_game_board.map{|c| c.join("")}.join("\n")
+	end
+
+	def print_minified_board(subsection_size = 10)
+		puts "MINIFIED GAME BOARD AT TIME: #{@current_turn}"
+		mini_board = Array.new(($dimensions[:y]/subsection_size).ceil)
+		mini_board.map!{|i| Array.new(($dimensions[:x]/subsection_size).ceil, ".")}
+
+		@walls.each do |wall|
+			wall.all_points.each do |p|
+				mini_board[(p[:y]/subsection_size).floor][(p[:x]/subsection_size).floor] = 'X'
+			end
+		end
+		mini_board[@hunter.coords[:y]/subsection_size][@hunter.coords[:x]/subsection_size] = "H"
+		mini_board[@prey.coords[:y]/subsection_size][@prey.coords[:x]/subsection_size] = "P"
+
+		puts mini_board.map{|s| s.join("")}.join("\n")
+	end
+
+	def full_game_board
+		rows = []
+		(0...$dimensions[:y]).each do |y|
+			cols = []
+			(0...$dimensions[:x]).each do |x|
+				cols << board_status({:x => x, :y => y})
+			end
+			rows << cols
+		end
+		hunter_blob = captured_points
+		hunter_blob.each do |point|
+			rows[point[:y]][point[:x]] = "-" if rows[point[:y]][point[:x]] == '.'
+		end
+		rows
+	end
+
+	def board_status(coords)
+		if @hunter.coords == coords
+			"H"
+		elsif @prey.coords == coords
+			"P"
+		elsif @board[coords[:y]][coords[:x]] == :wall
+			"X"
+		else
+			"."
+		end
+	end
+
 	### Methods called by wall interactions ###
 
 	def change_wall(action, id, endpoints) #True if wall created or deleted correctly
@@ -215,12 +328,12 @@ class Evasion
 	def place_wall!(id, endpoints) #True if wall is created
 		wall = Wall.new(id, endpoints)
 		if can_place_wall? wall
-			puts "Wall is placeable, placing #{id}"
+			# puts "Wall is placeable, placing #{id}"
 			@walls << wall
 			wall.all_points.each{|point| @board[point[:y]][point[:x]] = :wall }
 			true
 		else
-			puts "Wall was not placeable"
+			# puts "Wall was not placeable"
 			false
 		end
 	end
@@ -232,10 +345,10 @@ class Evasion
 	end
 
 	def remove_wall!(id) #True if wall is found for deletion
-		wall = @walls.select{|w| w.id == id}
+		wall = @walls.select{|w| w.id == id}.first
 		if wall
-			puts "Wall removed: #{id}"
-			wall.points.each{|point| @board[point[:y]][point[:x]] = :empty }
+			# puts "Wall removed: #{id}"
+			wall.all_points.each{|point| @board[point[:y]][point[:x]] = :empty }
 			@walls.delete(wall)
 			true
 		else
@@ -263,9 +376,10 @@ class Player
 
 	attr_accessor :x, :y, :cooldown, :connection, :username, :game, :time_taken
 
-	def initialize(game, connection, x, y)
+	def initialize(game, connection, username, x, y)
 		@game = game
 		@connection = connection
+		@username = username
 		place_at(x, y)
 		@cooldown = 0
 		@time_taken = 0
@@ -285,7 +399,7 @@ class Player
 
 	def write(text)
 		@connection.puts(text)
-		puts text
+		# puts text
 	end
 
 	def place_at(x, y)
@@ -295,7 +409,7 @@ class Player
 
 	def bounce!	#Complete direction flip if hitting a corner, else reflection
 		@direction = @@bounce_results[@direction][bounce_type]
-		puts "Bouncing #{@direction}"
+		# puts "Bouncing #{@direction}"
 	end
 
 	def will_bounce?
@@ -325,8 +439,8 @@ end
 
 class Hunter < Player
 	attr_accessor :direction
-	def initialize(game, connection)
-		super(game, connection, $start_locations[:hunter][:x],$start_locations[:hunter][:y])
+	def initialize(game, connection, username)
+		super(game, connection, username, $start_locations[:hunter][:x],$start_locations[:hunter][:y])
 		write("ACCEPTED HUNTER")
 		@direction = :SE
 	end
@@ -337,7 +451,7 @@ class Hunter < Player
 
 	def get_command
 		text = read.chomp
-		puts text
+		# puts text
 		command = {}
 		if text =~ /PASS/i
 			command[:pass] = true
@@ -345,14 +459,14 @@ class Hunter < Player
 			command[:action] = :add
 			command[:id] = $1.to_i #FUTURE spec says it is 4 digits max
 			command[:points] = [$2,$3].collect do |p|
-				x,y = p.split(",").map(&:to_i)
-				{:x => x, :y => y}
+				x,y = p.split(",")
+				{:x => x.to_i, :y => y.to_i}
 			end
-			puts "Adding wall: #{command.inspect}"
+			# puts "Adding wall: #{command.inspect}"
 		elsif text =~ /REMOVE\W+(\d+)/
 			command[:action] = :remove
 			command[:id] = $1.to_i #FUTURE spec says it is 4 digits max
-			puts "Removing wall: #{command.inspect}"
+			# puts "Removing wall: #{command.inspect}"
 		end
 		command
 	end
@@ -365,7 +479,7 @@ class Hunter < Player
 			start_time = Time.now
 			command = get_command
 			@time_taken += Time.now - start_time
-			puts "Hunter - Time taken: #{@time_taken}"
+			# puts "Hunter - Time taken: #{@time_taken}"
 			if !command[:pass]
 				@cooldown = $cooldown[:hunter]
 				@game.change_wall(command[:action], command[:id], command[:points])
@@ -384,8 +498,8 @@ class Hunter < Player
 end
 
 class Prey < Player
-	def initialize(game, connection)
-		super(game, connection, $start_locations[:prey][:x],$start_locations[:prey][:y])
+	def initialize(game, connection, username)
+		super(game, connection, username, $start_locations[:prey][:x],$start_locations[:prey][:y])
 		write("ACCEPTED PREY")
 	end
 
@@ -395,7 +509,7 @@ class Prey < Player
 
 	def get_command
 		text = read.chomp
-		puts text
+		# puts text
 		command = {}
 		if text =~ /PASS/i
 			command[:pass] = true
@@ -418,7 +532,7 @@ class Prey < Player
 			start_time = Time.now
 			command = get_command
 			@time_taken += Time.now - start_time
-			puts "Prey - Time taken: #{@time_taken}"
+			# puts "Prey - Time taken: #{@time_taken}"
 			if !command[:pass]
 				@cooldown = $cooldown[:prey]
 				if @game.occupied?(command[:x], command[:y])
@@ -469,6 +583,7 @@ class Wall
 end
 
 ### Game execution ###
+$threads = []
 $start_locations = {	:prey =>	{:x => 320,	:y => 200},
 						:hunter =>	{:x => 0,	:y => 0} }
 $time_limit = 120
@@ -477,5 +592,5 @@ $dimensions = { :x => 500, :y => 500 }
 $cooldown = { :hunter => 25, :prey => 1}
 $wall_max = 6
 $port = 23000
-game = Evasion.new
-game.play
+server = EvasionServer.new
+$threads.each { |aThread|  aThread.join }

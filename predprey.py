@@ -1,6 +1,7 @@
 #! /usr/bin/env python
 """
 Solves the predator/prey problem
+Usage: predprey.py <join name>
 """
 
 import sys
@@ -15,52 +16,115 @@ PORT = 23000
 start_time = time.time()
 walls = []
 side = ""
+turn = 0
 
 def usage():
     sys.stdout.write( __doc__ % os.path.basename(sys.argv[0]))
 
 class GameState:
     def __init__(self,hunter,prey,walls):
-        h = hunter
-        p = prey
-        w = walls
+        self.h = hunter
+        self.p = prey
+        self.w = walls
+        self.hscore = 0
+        self.pscore = 0
+        self.area = 0
+        self.maxx = 0
+        self.maxy = 0
+        self.minx = float('Inf')
+        self.miny = float('Inf')
 
     def __repr__(self):
         return "Hunter:\n%s\nPrey:\n%s\nWalls:\n%s\n" % \
-               (repr(h),repr(p),repr(w))
+               (repr(self.h),repr(self.p),repr(self.w))
+
+    def score(self):
+        # Assume all walls are spanning. This is cheating.
+        # This also assumes the hunter won't isolate the prey.
+        # The second assumption is both stupid AND lazy.
+        # I'm also sure there is a better way to do this.
+        for wall in self.w:
+            if wall.x > self.maxx and wall.x < self.p.x:
+                self.maxx = wall.x
+            elif wall.x < self.minx and wall.x > self.p.x:
+                self.minx = wall.x
+
+            if wall.y > self.maxy and wall.y < self.p.y:
+                self.maxy = wall.y
+            elif wall.y < self.miny and wall.y > self.p.y:
+                self.miny = wall.y
+            
+        self.area = (self.maxx - self.maxy) * \
+                    (self.maxy - self.miny)
+
+        self.score = self.area
+        
+        
+class WallGroup:
+    """
+    UNUSED.
+    
+    This class is for converting the walls into a graph
+    to find any cycles which may exist. If the prey is
+    inside these cycles, it is trapped.
+    """
+    def __init__(self,walls):
+        self.walls = make_graph(walls)
+
+    # def make_graph(self,self.walls):
+    #     x = []
+    #     for w1 in self.walls:
+    #         for w2 in self.walls:
+    #             if w1.x == w2.x:
+    #                 pass
 
 class Wall:
     def __init__(self,ident,x1,y1,x2,y2):
-        ident = ident
-        x1 = x1
-        y1 = y1
-        x2 = x2
-        y2 = y2
+        self.ident = ident
+        self.x1 = x1
+        self.y1 = y1
+        self.x2 = x2
+        self.y2 = y2
 
     def __repr__(self):
         return "%s (%s, %s), (%s, %s)" \
-           % (repr(r),repr(x1),repr(y1),repr(x2),repr(y2))
+           % (repr(self.r),repr(self.x1),\
+              repr(self.y1),repr(self.x2),repr(self.y2))
+
+    def isHoriz(self):
+        return self.x1 == self.x2
 
 class Hunter:
     def __init__(self,x,y,cd=0,d="SE"):
-        x = x
-        y = y
-        cd = cd
-        d = d
+        self.x = x
+        self.y = y
+        self.cd = cd
+        self.d = d
 
     def __repr__(self):
         return "x: %s\ty: %s\tcd: %s\td: %s" % \
-               (repr(x),repr(y),repr(cd),repr(d))
+               (repr(self.x),repr(self.y),repr(self.cd),repr(self.d))
 
 class Prey:
     def __init__(self,x,y,cd=0):
-        x = x
-        y = y
-        cd = cd
+        self.x = x
+        self.y = y
+        self.cd = cd
 
     def __repr__(self):
         return "x: %s\ty: %s\tcd: %s" % \
-               (repr(x),repr(y),repr(cd))
+               (repr(self.x),repr(self.y),repr(self.cd))
+
+def make_move(gamestate):
+    if side == "HUNTER":
+        if turn == 1:
+            return NewWall(0,202,499,202)
+        return "PASS"
+    elif side == "PREY":
+        moves = ['N','S','E','W','NE','NW','SE','SW']
+        return moves[random.randint(0,len(moves)-1)]
+    else:
+        print "WTF?"
 
 def NewWall(x1,y1,x2,y2):
     """
@@ -69,7 +133,7 @@ def NewWall(x1,y1,x2,y2):
     string to send to the server to add the wall
     """
     bad_num = False
-    r = random.random(1,9999)
+    r = random.randint(1,9999)
     while True:
         for w in walls:
             if r == w.ident:
@@ -83,11 +147,15 @@ def NewWall(x1,y1,x2,y2):
     walls.append(w)
     return "ADD",repr(w)
     
-def make_move(line):
+def MakeGS(line):
     """
     line will be in the form:
     YOURTURN _ROUNDNUMBER_ H(x, y, cooldown, direction),
     P(x, y, cooldown), W[wall_one, wall_two]
+
+    This very confusing function parses this protocol
+    to create a GameState object, and then calls
+    make_move to make the actual move.
     """
     a = line.split()
 
@@ -104,17 +172,22 @@ def make_move(line):
 
     offset = 0
     while True:
-        wall_id = int(a[9+offset].split("(")[1].strip(","))
-        wall_x1 = int(a[10+offset].strip(","))
-        wall_y1 = int(a[11+offset].strip(","))
-        wall_x2 = int(a[12+offset].strip(","))
-        t = a[13+offset]
-        wall_y2 = int(t.strip(",").strip(")"))
-        w = Wall(wall_id,wall_x1,wall_y1,wall_x2,wall_y2)
-        print w
-        walls.append(w)
-        if ")]" in t:
+        if a[9+offset] == "W[]":
+            walls = []
             break
+        else:
+            wall_id = int(a[9+offset].split("(")[1].strip(","))
+            wall_x1 = int(a[10+offset].strip(","))
+            wall_y1 = int(a[11+offset].strip(","))
+            wall_x2 = int(a[12+offset].strip(","))
+            t = a[13+offset]
+            wall_y2 = int(t.strip(",").strip(")"))
+            w = Wall(wall_id,wall_x1,wall_y1,wall_x2,wall_y2)
+            print w
+            walls.append(w)
+            offset += 5
+            if "]" in t:
+                break
 
     g = GameState(Hunter(hunt_x,hunt_y,hunt_cd,hunt_dir),\
                   Prey(prey_x,prey_y,prey_cd),\
@@ -129,6 +202,7 @@ def make_move(line):
     else:
         print "WTF?"
 
+    return g
 
 ## From:
 ## Charles J. Scheffold
@@ -138,16 +212,17 @@ def SReadLine (conn):
     while True:
         c = conn.recv(1)
         if not c:
-            time.sleep (1)
+            time.sleep(1)
             break
         data = data + c
-        if c == "\n":
+        if c == "\n" or c == "\r":
+            print data
             break
     return data
 
 if __name__ == "__main__":
 
-    if len(sys.argv) != 1:
+    if len(sys.argv) != 2:
         usage()
         sys.exit(1)
 
@@ -156,10 +231,8 @@ if __name__ == "__main__":
     s.connect ((HOST, PORT))
     print "Connected to", HOST, "port", PORT
 
-    accepted = False
-    game_on = False
-
-    s.send("JOIN MAX")
+    join = "JOIN" + repr(sys.argv[1]) + "\n"
+    s.send(join)
 
     # Read status line
     data = SReadLine (s)
@@ -170,23 +243,22 @@ if __name__ == "__main__":
     elif line == "ACCEPTED PREY":
         side = "PREY"
 
+    print side
+
     # Now get the game parameters
     data = SReadLine (s)
     line = string.strip (data)
 
-    data = SReadLine (s)
-    line = string.strip (data)
-
-    xdim, ydim, wallcount, wallcd, preycd = 0
-
     # TODO - dynamic?
     xdim = 500
     ydim = 500
-    wallcount = 1
-    wallcd = 10
+    wallcount = 6
+    wallcd = 25
     preycd = 1
 
     while True:
+        turn += 1
+        print "in loop",turn
         # Read one line from server
         data = SReadLine (s)
 
@@ -197,10 +269,12 @@ if __name__ == "__main__":
 
         # Strip the newline
         line = string.strip (data)
-        print line
+        print "Line:",line
 
-        if "YOUTURN" in line:
-            make_move(line)
+        if "YOURTURN" in line:
+            GS = MakeGS(line)
+            move = make_move(GS)
+            s.send(move + "\n")
 
     # Poof!
     s.close ()
