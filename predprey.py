@@ -26,13 +26,11 @@ class GameState:
         self.h = hunter
         self.p = prey
         self.w = walls
-        self.hscore = 0
-        self.pscore = 0
         self.area = 0
-        self.maxx = 0
-        self.maxy = 0
-        self.minx = float('Inf')
-        self.miny = float('Inf')
+        self.maxx = 500
+        self.maxy = 500
+        self.minx = 0
+        self.miny = 0
 
     def __repr__(self):
         return "Hunter:\n%s\nPrey:\n%s\nWalls:\n%s\n" % \
@@ -43,21 +41,26 @@ class GameState:
         # This also assumes the hunter won't isolate the prey.
         # The second assumption is both stupid AND lazy.
         # I'm also sure there is a better way to do this.
-        for wall in self.w:
-            if wall.x > self.maxx and wall.x < self.p.x:
-                self.maxx = wall.x
-            elif wall.x < self.minx and wall.x > self.p.x:
-                self.minx = wall.x
 
-            if wall.y > self.maxy and wall.y < self.p.y:
-                self.maxy = wall.y
-            elif wall.y < self.miny and wall.y > self.p.y:
-                self.miny = wall.y
+        for wall in self.w:
+            if not wall.isHoriz:
+                # x1 == x2
+                if wall.x1 < self.maxx and wall.x1 > self.p.x:
+                    self.maxx = wall.x1
+                elif wall.x1 > self.minx and wall.x1 < self.p.x:
+                    self.minx = wall.x1
+
+            else:
+                # y1 == y2
+                if wall.y1 < self.maxy and wall.y1 > self.p.y:
+                    self.maxy = wall.y1
+                elif wall.y1 > self.miny and wall.y1 < self.p.y:
+                    self.miny = wall.y1
             
         self.area = (self.maxx - self.maxy) * \
                     (self.maxy - self.miny)
 
-        self.score = self.area
+        return self.area
         
         
 class WallGroup:
@@ -88,7 +91,7 @@ class Wall:
 
     def __repr__(self):
         return "%s (%s, %s), (%s, %s)" \
-           % (repr(self.r),repr(self.x1),\
+           % (repr(self.ident),repr(self.x1),\
               repr(self.y1),repr(self.x2),repr(self.y2))
 
     def isHoriz(self):
@@ -106,7 +109,7 @@ class Hunter:
                (repr(self.x),repr(self.y),repr(self.cd),repr(self.d))
 
 class Prey:
-    def __init__(self,x,y,cd=0):
+    def __init__(self,x,y,cd=1):
         self.x = x
         self.y = y
         self.cd = cd
@@ -115,14 +118,31 @@ class Prey:
         return "x: %s\ty: %s\tcd: %s" % \
                (repr(self.x),repr(self.y),repr(self.cd))
 
-def make_move(gamestate):
+def make_move(g):
+    print "Current Score:",g.score()
     if side == "HUNTER":
+        # if your cooldown is up
+        # find the best place for a wall
+        # and place it
         if turn == 1:
             return NewWall(0,202,499,202)
-        return "PASS"
+        elif g.p.cd == 0: # prey's cooldown is 0
+            # move!
+            return NewWall(0,100,499,100)
+        else:
+            return "PASS"
     elif side == "PREY":
+        # if your cooldown is up
+        # find where the hunter is headed
+        # find the closest boundary
+        # move towards the midpoint
         moves = ['N','S','E','W','NE','NW','SE','SW']
-        return moves[random.randint(0,len(moves)-1)]
+        # return moves[random.randint(0,len(moves)-1)]
+        if g.h.cd == 0: # prey's cooldown is 0
+            # move
+            return "NE"
+        else:
+            return "PASS"
     else:
         print "WTF?"
 
@@ -145,7 +165,7 @@ def NewWall(x1,y1,x2,y2):
 
     w = Wall(r,x1,y1,x2,y2)
     walls.append(w)
-    return "ADD",repr(w)
+    return "ADD " + repr(w)
     
 def MakeGS(line):
     """
@@ -171,9 +191,10 @@ def MakeGS(line):
     prey_cd = int(a[8].strip(",").strip(")"))
 
     offset = 0
+    walls = []
+
     while True:
         if a[9+offset] == "W[]":
-            walls = []
             break
         else:
             wall_id = int(a[9+offset].split("(")[1].strip(","))
@@ -181,9 +202,8 @@ def MakeGS(line):
             wall_y1 = int(a[11+offset].strip(","))
             wall_x2 = int(a[12+offset].strip(","))
             t = a[13+offset]
-            wall_y2 = int(t.strip(",").strip(")"))
+            wall_y2 = int(t.strip("]").strip(",").strip(")"))
             w = Wall(wall_id,wall_x1,wall_y1,wall_x2,wall_y2)
-            print w
             walls.append(w)
             offset += 5
             if "]" in t:
@@ -274,6 +294,7 @@ if __name__ == "__main__":
         if "YOURTURN" in line:
             GS = MakeGS(line)
             move = make_move(GS)
+            print "Move",move
             s.send(move + "\n")
 
     # Poof!
