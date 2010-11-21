@@ -10,6 +10,7 @@ import time
 import socket
 import string
 import random
+import copy
 
 HOST = 'localhost'
 PORT = 23000
@@ -27,8 +28,8 @@ class GameState:
         self.p = prey
         self.w = walls
         self.area = 0
-        self.maxx = 500
-        self.maxy = 500
+        self.maxx = 499
+        self.maxy = 499
         self.minx = 0
         self.miny = 0
 
@@ -92,7 +93,7 @@ class Wall:
     def __repr__(self):
         return "%s (%s, %s), (%s, %s)" \
            % (repr(self.ident),repr(self.x1),\
-n              repr(self.y1),repr(self.x2),repr(self.y2))
+              repr(self.y1),repr(self.x2),repr(self.y2))
 
     def isHoriz(self):
         return self.x1 == self.x2
@@ -125,10 +126,33 @@ def make_move(g):
         # find the best place for a wall
         # and place it
         if turn == 1:
-            return NewWall(0,202,499,202)
-        elif g.p.cd == 0: # prey's cooldown is 0
+            return NewWall(True,202,g)
+        elif g.h.cd == 0: # hunter's cooldown is 0
             # move!
-            return NewWall(0,100,499,100)
+            # find out which side of the prey we're on
+            if g.h.x < g.p.x:
+                # we're on the left side of the prey
+                vert_wall = NewWall(False,g.p.x+1,g)
+            else:
+                vert_wall = NewWall(False,g.p.x-1,g)
+
+            if g.h.y < g.p.y:
+                # we're below the prey
+                horiz_wall = NewWall(True,g.p.y+1,g)
+            else:
+                horiz_wall = NewWall(True,g.p.y-1,g)
+                
+            horiz_game = copy.deepcopy(g)
+            horiz_game.w.append(horiz_wall[1]) # the pointer to the wall
+
+            vert_game = copy.deepcopy(g)
+            vert_game.w.append(very_wall[1])
+
+            if vert_game.score() > horiz_game.score():
+                return vert_wall[0] # the text to add the wall
+            else:
+                return horiz_wall[0]
+        
         else:
             return "PASS"
     elif side == "PREY":
@@ -172,15 +196,16 @@ def make_move(g):
             # bottom
             else:
                 py += 1
+
             # head for that
             
-            return "NE"
+            return "%s, %s" % (repr(px),repr(py))
         else:
             return "PASS"
     else:
         print "WTF?"
 
-def NewWall(x1,y1,x2,y2):
+def NewWall(isHoriz,XorY,g):
     """
     wrapper for creating an instance of the wall class:
     adds a wall to the walls array and returns the
@@ -197,9 +222,19 @@ def NewWall(x1,y1,x2,y2):
         else:
             r = random.random(1,9999)
 
+    x1, y1, x2, y2 = None
+    if isHoriz:
+        # only need y value
+        y1 = y2 = XorY
+        # spanning wall
+        x1 = g.minx
+        x2 = g.miny
+    else:
+        x1 = x2 = XorY
+        y1 = g.miny
+        y2 = g.maxy
     w = Wall(r,x1,y1,x2,y2)
-    walls.append(w)
-    return "ADD " + repr(w)
+    return "ADD " + repr(w),w
     
 def MakeGS(line):
     """
