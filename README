@@ -1,0 +1,12 @@
+hunter at 0,0 (upper left) going SE
+prey at 330,200
+500 by 500 grid
+hunters can place walls - x1,y1;x2,y2
+cooldown for wall placement
+
+bouncing:
+on corner (vertical), reflect exactly (NE --> SE)
+
+prey can move every other turn (one turn cooldown, can choose not to move)
+hunter places a wall or passes
+wall is placed before moving
