@@ -92,7 +92,7 @@ class Wall:
     def __repr__(self):
         return "%s (%s, %s), (%s, %s)" \
            % (repr(self.ident),repr(self.x1),\
-              repr(self.y1),repr(self.x2),repr(self.y2))
+n              repr(self.y1),repr(self.x2),repr(self.y2))
 
     def isHoriz(self):
         return self.x1 == self.x2
@@ -139,7 +139,14 @@ def make_move(g):
         moves = ['N','S','E','W','NE','NW','SE','SW']
         # return moves[random.randint(0,len(moves)-1)]
         if g.h.cd == 0: # prey's cooldown is 0
-            # move
+            # find where hunter will be next turn
+            # g.h.x and g.h.y
+            # find out where the closest wall to the prey is
+            # g.maxx g.maxy g.minx g.miny
+            # find out where the middle is
+            
+            # head for that
+            
             return "NE"
         else:
             return "PASS"
