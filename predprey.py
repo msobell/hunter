@@ -141,10 +141,37 @@ def make_move(g):
         if g.h.cd == 0: # prey's cooldown is 0
             # find where hunter will be next turn
             # g.h.x and g.h.y
+            # dir = g.h.d
             # find out where the closest wall to the prey is
             # g.maxx g.maxy g.minx g.miny
             # find out where the middle is
-            
+            hx = g.h.x
+            hy = g.h.y
+            px = g.p.x
+            py = g.p.y
+            if 'N' in g.h.d:
+                hy += 1
+            else:
+                hy -= 1
+
+            if 'E' in g.h.x:
+                hx += 1
+            else:
+                hx -= 1
+
+            # right side
+            if (g.p.x - g.minx) > (g.maxx - g.p.x):
+                px -= 1
+            # left side
+            else:
+                px += 1
+
+            # top
+            if (g.p.y - g.miny) > (g.maxy - g.p.y):
+                py -= 1
+            # bottom
+            else:
+                py += 1
             # head for that
             
             return "NE"
