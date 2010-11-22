@@ -16,7 +16,6 @@ HOST = 'localhost'
 PORT = 23000
 start_time = time.time()
 walls = []
-wall_place = 0
 side = ""
 turn = 0
 
@@ -45,6 +44,7 @@ class GameState:
         # I'm also sure there is a better way to do this.
 
         for wall in self.w:
+            
             if wall.isVert():
                 # x1 == x2
                 if wall.x1 < self.maxx and wall.x1 > self.p.x:
@@ -59,7 +59,7 @@ class GameState:
                 elif wall.y1 > self.miny and wall.y1 < self.p.y:
                     self.miny = wall.y1
             
-        self.area = (self.maxx - self.maxy) * \
+        self.area = (self.maxx - self.minx) * \
                     (self.maxy - self.miny)
 
         return self.area
@@ -103,7 +103,6 @@ class Prey:
 
 def make_move(g):
     print "Current Score:",g.score()
-    ret_string = ""
     if side == "HUNTER":
         # if your cooldown is up
         # find the best place for a wall
@@ -134,15 +133,12 @@ def make_move(g):
                 all_walls.append(NewWall(True,g.p.y-1,g))
                 all_walls.append(NewWall(True,g.h.y+1,g))
                 
-            print "PRINTING ALL WALLS:"
-            for w in all_walls:
-                print w
-
             min_game = g
             min_wall = all_walls[0]
             for wall in all_walls:
                 game = copy.deepcopy(g)
                 game.w.append(wall)
+                print "Game score: %s for wall %s" % (repr(game.score()),repr(wall))
                 if game.score() < min_game.score():
                     min_game = game
                     min_wall = wall
@@ -175,17 +171,13 @@ def make_move(g):
                 # remove it
 
                 if i < len(new_walls) - 2:
-                    old_wall = new_walls[i].ident
+                    old_wall = new_walls[-1].ident
                 else:
                     old_wall = new_walls[0].ident
 
-                ret_string += "REMOVE " + repr(old_wall) + "\n"
+                return "REMOVE " + repr(old_wall) + "\n"
 
-            ret_string += "ADD " + repr(min_wall)
-
-            print "RETURNING: " + ret_string
-
-            return ret_string
+            return "ADD " + repr(min_wall)
         else:
             return "PASS"
     elif side == "PREY":
@@ -195,7 +187,7 @@ def make_move(g):
         # move towards the midpoint
         moves = ['N','S','E','W','NE','NW','SE','SW']
         # return moves[random.randint(0,len(moves)-1)]
-        if g.h.cd == 0: # prey's cooldown is 0
+        if g.p.cd == 0: # prey's cooldown is 0
             # find where hunter will be next turn
             # g.h.x and g.h.y
             # dir = g.h.d
@@ -206,34 +198,40 @@ def make_move(g):
             hy = g.h.y
             px = g.p.x
             py = g.p.y
+            print "px,py",px,py
             if 'N' in g.h.d:
                 hy += 1
+                if py > (g.miny + 1):
+                    py -= 1
             else:
                 hy -= 1
+                if py > (g.maxy - 1):
+                    py += 1
 
             if 'E' in g.h.d:
                 hx += 1
+                if px > (g.minx + 1):
+                    px -= 1
             else:
                 hx -= 1
+                if px > (g.maxx - 1):
+                    px += 1
 
-            # right side
-            if (g.p.x - g.minx) > (g.maxx - g.p.x):
-                px -= 1
-            # left side
-            else:
-                px += 1
-
-            # top
-            if (g.p.y - g.miny) > (g.maxy - g.p.y):
-                py -= 1
-            # bottom
-            else:
-                py += 1
+            # # top
+            # if (g.p.y - g.miny) > (g.maxy - g.p.y):
+            #     py += 1
+            # # bottom
+            # else:
+            #     py -= 1
 
             # head for that
+
+            # py -= 1
             
+            print "moved px,py",px,py
             return "%s, %s" % (repr(px),repr(py))
         else:
+            print "CD NOT 0",g.p.cd
             return "PASS"
     else:
         print "WTF?"
@@ -245,8 +243,12 @@ def NewWall(isHoriz,XorY,g):
     string to send to the server to add the wall
     """
 
-    r = wall_place
-    wall_place += 1
+    max_ident = 0
+    for w in g.w:
+        if w.ident > max_ident:
+            max_ident = w.ident
+
+    r = max_ident + 1
     x1, y1, x2, y2 = [0,0,0,0]
     g.score()
     if isHoriz:
