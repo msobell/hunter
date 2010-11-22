@@ -16,6 +16,7 @@ HOST = 'localhost'
 PORT = 23000
 start_time = time.time()
 walls = []
+wall_place = 0
 side = ""
 turn = 0
 
@@ -34,8 +35,8 @@ class GameState:
         self.miny = 0
 
     def __repr__(self):
-        return "Hunter:\n%s\nPrey:\n%s\nWalls:\n%s\n" % \
-               (repr(self.h),repr(self.p),repr(self.w))
+        return "Hunter:\n%s\nPrey:\n%s\nBoundaries:\nminx=%s\tmaxx=%s\tminy=%s\tmaxy=%s\n" % \
+               (repr(self.h),repr(self.p),repr(self.minx),repr(self.maxx),repr(self.miny),repr(self.maxy))
 
     def score(self):
         # Assume all walls are spanning. This is cheating.
@@ -44,7 +45,7 @@ class GameState:
         # I'm also sure there is a better way to do this.
 
         for wall in self.w:
-            if not wall.isHoriz:
+            if wall.isVert():
                 # x1 == x2
                 if wall.x1 < self.maxx and wall.x1 > self.p.x:
                     self.maxx = wall.x1
@@ -63,25 +64,6 @@ class GameState:
 
         return self.area
         
-        
-class WallGroup:
-    """
-    UNUSED.
-    
-    This class is for converting the walls into a graph
-    to find any cycles which may exist. If the prey is
-    inside these cycles, it is trapped.
-    """
-    def __init__(self,walls):
-        self.walls = make_graph(walls)
-
-    # def make_graph(self,self.walls):
-    #     x = []
-    #     for w1 in self.walls:
-    #         for w2 in self.walls:
-    #             if w1.x == w2.x:
-    #                 pass
-
 class Wall:
     def __init__(self,ident,x1,y1,x2,y2):
         self.ident = ident
@@ -95,7 +77,7 @@ class Wall:
            % (repr(self.ident),repr(self.x1),\
               repr(self.y1),repr(self.x2),repr(self.y2))
 
-    def isHoriz(self):
+    def isVert(self):
         return self.x1 == self.x2
 
 class Hunter:
@@ -121,38 +103,89 @@ class Prey:
 
 def make_move(g):
     print "Current Score:",g.score()
+    ret_string = ""
     if side == "HUNTER":
         # if your cooldown is up
         # find the best place for a wall
         # and place it
+        all_walls = []
         if turn == 1:
-            return NewWall(True,202,g)
+            return "ADD " + repr(NewWall(True,202,g))
         elif g.h.cd == 0: # hunter's cooldown is 0
             # move!
             # find out which side of the prey we're on
             if g.h.x < g.p.x:
                 # we're on the left side of the prey
-                vert_wall = NewWall(False,g.p.x+1,g)
+                # so look at the right side of the prey
+                all_walls.append(NewWall(False,g.p.x+1,g))
+                # and the left side of us
+                all_walls.append(NewWall(False,g.h.x-1,g))
             else:
-                vert_wall = NewWall(False,g.p.x-1,g)
+                all_walls.append(NewWall(False,g.p.x-1,g))
+                all_walls.append(NewWall(False,g.h.x+1,g))
 
             if g.h.y < g.p.y:
                 # we're below the prey
-                horiz_wall = NewWall(True,g.p.y+1,g)
+                # so look at above the prey
+                all_walls.append(NewWall(True,g.p.y+1,g))
+                # and below us
+                all_walls.append(NewWall(True,g.h.y-1,g))
             else:
-                horiz_wall = NewWall(True,g.p.y-1,g)
+                all_walls.append(NewWall(True,g.p.y-1,g))
+                all_walls.append(NewWall(True,g.h.y+1,g))
                 
-            horiz_game = copy.deepcopy(g)
-            horiz_game.w.append(horiz_wall[1]) # the pointer to the wall
+            print "PRINTING ALL WALLS:"
+            for w in all_walls:
+                print w
 
-            vert_game = copy.deepcopy(g)
-            vert_game.w.append(very_wall[1])
+            min_game = g
+            min_wall = all_walls[0]
+            for wall in all_walls:
+                game = copy.deepcopy(g)
+                game.w.append(wall)
+                if game.score() < min_game.score():
+                    min_game = game
+                    min_wall = wall
 
-            if vert_game.score() > horiz_game.score():
-                return vert_wall[0] # the text to add the wall
-            else:
-                return horiz_wall[0]
-        
+            if len(g.w) == 6:
+                print "REMOVING A WALL!"
+                horiz_walls = []
+                vert_walls = []
+                for wall in min_game.w:
+                    if wall.isVert():
+                        vert_walls.append(wall)
+                    else:
+                        horiz_walls.append(wall)
+
+                if len(horiz_walls) > len(vert_walls):
+                    new_walls = sorted(horiz_walls, key=lambda Wall: Wall.y1)
+                else:
+                    new_walls = sorted(vert_walls, key=lambda Wall: Wall.x1)
+
+                i = 0
+                if new_walls[0].isVert():
+                    while new_walls[i].x1 < g.h.x:
+                        i += 1
+                else:
+                    while new_walls[i].y1 < g.h.y:
+                        i += 1
+
+                # now i points to the element above/to the right
+                # of the hunter. go one more (if it exists) and
+                # remove it
+
+                if i < len(new_walls) - 2:
+                    old_wall = new_walls[i].ident
+                else:
+                    old_wall = new_walls[0].ident
+
+                ret_string += "REMOVE " + repr(old_wall) + "\n"
+
+            ret_string += "ADD " + repr(min_wall)
+
+            print "RETURNING: " + ret_string
+
+            return ret_string
         else:
             return "PASS"
     elif side == "PREY":
@@ -178,7 +211,7 @@ def make_move(g):
             else:
                 hy -= 1
 
-            if 'E' in g.h.x:
+            if 'E' in g.h.d:
                 hx += 1
             else:
                 hx -= 1
@@ -211,30 +244,23 @@ def NewWall(isHoriz,XorY,g):
     adds a wall to the walls array and returns the
     string to send to the server to add the wall
     """
-    bad_num = False
-    r = random.randint(1,9999)
-    while True:
-        for w in walls:
-            if r == w.ident:
-                bad_num = True
-        if not bad_num:
-            break
-        else:
-            r = random.random(1,9999)
 
-    x1, y1, x2, y2 = None
+    r = wall_place
+    wall_place += 1
+    x1, y1, x2, y2 = [0,0,0,0]
+    g.score()
     if isHoriz:
         # only need y value
         y1 = y2 = XorY
         # spanning wall
         x1 = g.minx
-        x2 = g.miny
+        x2 = g.maxx-1
     else:
         x1 = x2 = XorY
         y1 = g.miny
-        y2 = g.maxy
+        y2 = g.maxy-1
     w = Wall(r,x1,y1,x2,y2)
-    return "ADD " + repr(w),w
+    return w
     
 def MakeGS(line):
     """
