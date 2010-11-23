@@ -202,11 +202,11 @@ def make_move(g):
             if 'N' in g.h.d:
                 hy += 1
                 if py > (g.miny + 1):
-                    py -= 1
+                    py += 1
             else:
                 hy -= 1
-                if py > (g.maxy - 1):
-                    py += 1
+                #                if py > (g.maxy - 1):
+                py -= 1
 
             if 'E' in g.h.d:
                 hx += 1
